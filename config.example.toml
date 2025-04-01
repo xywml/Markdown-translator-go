@@ -3,7 +3,7 @@
 [api]
 # 必填: 使用的 LLM 提供商 (openai, claude, gemini)
 provider = "openai"
-# 可选: API 端点 URL (使用默认值留空) 例如：https://api.siliconflow.cn/v1
+# 可选: API 端点 URL (使用默认值留空) 例如：https://api.siliconflow.com/v1/chat/completions
 endpoint = "" 
 # 必填: API 密钥 (除非使用 --dry-run 模式) sk-xxxxx
 key = "" 
