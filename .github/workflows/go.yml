@@ -1,4 +1,4 @@
-name: Build, Translate, and Release
+name: Release
 
 on:
   workflow_dispatch: # 允许手动触发
@@ -6,133 +6,82 @@ on:
     tags:
       - 'v*.*.*' # 仅在推送 vX.Y.Z 格式的 tag 时触发
 
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  build:
+  # This job builds the executables and creates the release
+  build-and-release:
+    name: Build and Release
+    # Use the latest Ubuntu runner available
     runs-on: ubuntu-latest
-    strategy:
-      # 修正 1: 使用标准的 'matbbb' key
-      matbbb:
-        goos: [windows, linux]
-        goarch: [amd64]
-    # 修正 2: 移除不必要且易出错的 job outputs
-    # outputs: ... (移除)
+    # Grant permissions for actions/create-release to create a release
+    permissions:
+      contents: write
+    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
+      # 1. Checkout the code for the specific tag
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 获取所有历史记录，用于生成 release notes
-
+        # Fetches all history for all tags and branches - ensures the tag is available
+        # Although checkout usually handles tags correctly, this can sometimes help
+        # with edge cases or if you need tag annotations later.
+        # with:
+        #   fetch-depth: 0
+      # 2. Set up the Go environment
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21' # 固定 Go 版本
-
-      - name: Build Go application
-        # 修正 3: 给步骤添加 id 以便引用其输出
-        id: build_step
+          # Specify the Go version you want to use for building
+          # Using '1.x' will use the latest stable 1.x version
+          go-version: '1.x'
+          # Optional: Cache Go modules to speed up future builds
+          cache: true
+      # 3. Build for Linux (amd64)
+      #    - GOOS/GOARCH env vars control the target platform
+      #    - CGO_ENABLED=0 often simplifies cross-compilation (avoids needing C cross-compilers)
+      #    - -ldflags="-s -w" strips debug symbols and DWARF info, reducing binary size
+      - name: Build for Linux (amd64)
         run: |
-          # 推荐: 脚本出错时立即退出
-          set -e
-
-          # 使用 matbbb 上下文变量构建二进制文件名
-          BINARY_NAME="Markdown-translator-go-app-${{ matbbb.goos }}-${{ matbbb.goarch }}"
-          if [[ "${{ matbbb.goos }}" == "windows" ]]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
-          fi
-          echo "Building: $BINARY_NAME"
-
-          # 执行交叉编译
-          GOOS=${{ matbbb.goos }} GOARCH=${{ matbbb.goarch }} go build -o "$BINARY_NAME" .
-
-          # 修正 4: 使用 GITHUB_OUTPUT 定义此步骤的输出，供后续步骤使用
-          echo "binary_path=${BINARY_NAME}" >> $GITHUB_OUTPUT
-          echo "artifact_name=Markdown-translator-go-app-${{ matbbb.goos }}-${{ matbbb.goarch }}" >> $GITHUB_OUTPUT
-
-      - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4 # 修正 5: 移除末尾的 '本' 字
-        with:
-          # 修正 6: 使用 build_step 的输出作为 artifact name
-          name: ${{ steps.build_step.outputs.artifact_name }}
-          # 修正 7: 使用 build_step 的输出作为要上传的路径
-          path: ${{ steps.build_step.outputs.binary_path }}
-          retention-days: 1 # 保留 artifact 1 天
-
-  translate:
-    needs: build # 依赖 build job 完成
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4 # 需要访问 ./pages 目录
-
-      - name: Download Linux Binary Artifact
-        uses: actions/download-artifact@v4
-        with:
-          # 注意: 这里仍然硬编码了 Linux artifact 名称。
-          # 如果构建策略或命名约定改变，这里需要同步修改。
-          # 对于明确使用 Linux 二进制进行翻译的场景，这是可接受的简化。
-          name: Markdown-translator-go-app-linux-amd64
-          path: . # 下载到当前工作目录
-
-      - name: Set Execute Permissions
-        run: chmod +x ./Markdown-translator-go-app-linux-amd64
-
-      - name: Translate Markdown Files
+          echo "Building for Linux amd64..."
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o Markdown-translator-go-app-linux-amd64 .
         env:
-          # 从 Secrets 获取 API Key，确保安全
-          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }}
+          CGO_ENABLED: 0
+      # 4. Build for Windows (amd64)
+      #    - Note the .exe suffix for the output file
+      - name: Build for Windows (amd64)
         run: |
-          set -e # 推荐: 脚本出错时立即退出
-          ./Markdown-translator-go-app-linux-amd64 \
-            --source ./pages \
-            --target ./pages.zh \
-            --provider openai \
-            --model "gpt-4o-mini" \
-            --concurrency 5 \
-            --overwrite
-
-      - name: Archive Translated Files
-        run: |
-          set -e # 推荐: 脚本出错时立即退出
-          # 将翻译后的目录打包
-          tar -czvf translated-pages.tar.gz ./pages.zh
-
-      - name: Upload Translation Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: translated-pages # Artifact 名称，供 release job 使用
-          path: translated-pages.tar.gz # 上传打包后的文件
-          retention-days: 1 # 保留 artifact 1 天
-
-  release:
-    needs: [build, translate] # 依赖 build 和 translate job 完成
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # 需要写权限来创建 Release 和上传附件
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 获取所有历史记录，用于生成 release notes
-
-      - name: Download All Build and Translation Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          # 不指定 name，下载本次 workflow 运行产生的所有 artifacts
-          # 每个 artifact 会被放在以其名字命名的子目录下
-          path: artifacts
-
-      - name: List downloaded artifacts (for debugging)
-        run: ls -R artifacts # 打印下载内容，方便调试
-
+          echo "Building for Windows amd64..."
+          GOOS=windows GOARCH=amd64 go build -v -ldflags="-s -w" -o Markdown-translator-go-app-windows-amd64.exe .
+        env:
+          CGO_ENABLED: 0
+      # (Optional) 5. Consider creating archives (e.g., .zip, .tar.gz)
+      # If you prefer distributing archives instead of raw executables:
+      # - name: Archive Linux build
+      #   run: tar czvf Markdown-translator-go-app-linux-amd64.tar.gz Markdown-translator-go-app-linux-amd64 README.md LICENSE # Add other files as needed
+      # - name: Archive Windows build
+      #   run: zip Markdown-translator-go-app-windows-amd64.zip Markdown-translator-go-app-windows-amd64.exe README.md LICENSE # Add other files as needed
+      # 6. Create the GitHub Release
+      #    - Uses the popular softprops/action-gh-release action
+      #    - Automatically uses the pushed tag name
+      #    - Uploads the specified files as release assets
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          # 文件路径基于 download-artifact 的行为: artifacts/<artifact_name>/<file_in_artifact>
-          # 这些路径现在应该能正确工作，因为 build job 中的 upload-artifact 已修正
-          files: |
-            artifacts/Markdown-translator-go-app-windows-amd64/Markdown-translator-go-app-windows-amd64.exe
-            artifacts/Markdown-translator-go-app-linux-amd64/Markdown-translator-go-app-linux-amd64
-            artifacts/translated-pages/translated-pages.tar.gz
-          generate_release_notes: true # 自动基于 commits 生成 release notes
+        uses: softprops/action-gh-release@v2 # Use v2 or check for the latest stable version
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 使用内置的 GITHUB_TOKEN 进行认证
+          # The GITHUB_TOKEN is automatically provided by GitHub Actions
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Define the files to upload. Adjust if you implemented the optional archiving step
+          # Use multi-line string syntax for clarity if many files
+          files: |
+            Markdown-translator-go-app-linux-amd64
+            Markdown-translator-go-app-windows-amd64.exe
+          # Optional: Customize release name (defaults to tag name)
+          name: Release ${{ github.ref_name }}
+          # Optional: Add release notes from a file or directly
+          # body_path: CHANGELOG.md
+          # body: |
+          #   Automated release for version ${{ github.ref_name }}
+          #   Built binaries for Linux and Windows attached.
+          # Optional: Mark as pre-release if tag contains 'beta', 'alpha', 'rc' etc.
+          # prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') || contains(github.ref, 'rc') }}
+          # Optional: Keep as draft until manually published
+          # draft: true
