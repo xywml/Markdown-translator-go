@@ -1,0 +1,23 @@
+# 复制此文件到 config.toml 并按需修改
+
+[api]
+# 必填: 使用的 LLM 提供商 (openai, claude, gemini)
+provider = "openai"
+# 可选: API 端点 URL (使用默认值留空) 例如：https://api.siliconflow.cn/v1
+endpoint = "" 
+# 必填: API 密钥 (除非使用 --dry-run 模式) sk-xxxxx
+key = "" 
+# 可选: 使用的模型名称 例如Qwen/Qwen2.5-72B-Instruct
+model = ""
+
+[general]
+# 源目录 (包含英文 md 文件)
+source_dir = ""
+# 目标目录 (用于输出翻译文件)
+target_dir = ""
+# 并发 Worker 数量
+concurrency = 15
+# Prompt 模板文件路径
+prompt_file = "prompt.template"
+# 是否覆盖已存在的文件
+overwrite = false
