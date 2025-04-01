@@ -1,0 +1,103 @@
+name: Translate and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on tag creation (e.g., v1.2.3)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [windows, linux]
+        goarch: [amd64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed to create the release notes
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20' # Or your desired Go version
+
+      - name: Build
+        env:
+          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }}
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}$(if eq(matrix.goos, 'windows'); then echo .exe; else echo ;) .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+  translate:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: Markdown-translator-go-app-linux-amd64
+          path: .
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.1' # Or your desired Go version
+
+      - name: Translate Markdown
+        env:
+          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }}
+        run: |
+          ./Markdown-translator-go-app-linux-amd64 \
+            --source ./pages \  # Replace with your source directory
+            --target ./pages.zh \  # Replace with your target directory
+            --provider openai \
+            --model "gpt-4o-mini" \
+            --concurrency 5 \
+            --overwrite
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+
+      - name: Commit changes
+        run: |
+          git add ./pages.zh/*  # Add the translated files
+          git commit -m "Automated translation using Markdown-translator-go"
+          git push
+        if: success()
+
+  release:
+    needs: [build, translate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed to create the release notes
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/Markdown-translator-go-app-windows-amd64/Markdown-translator-go-app-windows-amd64.exe
+            artifacts/Markdown-translator-go-app-linux-amd64/Markdown-translator-go-app-linux-amd64
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
