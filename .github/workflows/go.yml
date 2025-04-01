@@ -1,40 +1,49 @@
-name: Translate and Release
+name: Build, Translate, and Release
 
 on:
   push:
     tags:
-      - 'v*.*.*' # Trigger on tag creation (e.g., v1.2.3)
+      - 'v*.*.*' 
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
-      matrix:
+      matbbb:
         goos: [windows, linux]
         goarch: [amd64]
-
+    outputs: 
+      binary_name: Markdown-translator-go-app-${{ matbbb.goos }}-${{ matbbb.goarch }}$(if eq(matbbb.goos, 'windows'); then echo '.exe'; fi)
+      artifact_name: Markdown-translator-go-app-${{ matbbb.goos }}-${{ matbbb.goarch }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Needed to create the release notes
+          fetch-depth: 0 
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5 
         with:
-          go-version: '1.20' # Or your desired Go version
+          go-version: '1.21' 
 
       - name: Build
-        env:
-          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }}
         run: |
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}$(if eq(matrix.goos, 'windows'); then echo .exe; else echo ;) .
+          
+          BINARY_NAME="Markdown-translator-go-app-${{ matbbb.goos }}-${{ matbbb.goarch }}"
+          if [[ "${{ matbbb.goos }}" == "windows" ]]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+          fi
+          echo "Building: $BINARY_NAME"
+         
+          GOOS=${{ matbbb.goos }} GOARCH=${{ matbbb.goarch }} go build -o "$BINARY_NAME" .
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4 本
         with:
-          name: Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: Markdown-translator-go-app-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: ${{ steps.build.outputs.artifact_name }} 
+          path: ${{ steps.build.outputs.binary_name }} 
+          retention-days: 1 
 
   translate:
     needs: build
@@ -42,62 +51,72 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v3
+      - name: Download Linux Binary Artifact
+        uses: actions/download-artifact@v4 
         with:
-          name: Markdown-translator-go-app-linux-amd64
-          path: .
+          name: Markdown-translator-go-app-linux-amd64 
+          path: . 
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.24.1' # Or your desired Go version
+
+
+      - name: Set Execute Permissions
+        run: chmod +x ./Markdown-translator-go-app-linux-amd64
 
       - name: Translate Markdown
         env:
-          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }}
+          MK_TRANSLATOR_API_KEY: ${{ secrets.MK_TRANSLATOR_API_KEY }} 
         run: |
           ./Markdown-translator-go-app-linux-amd64 \
-            --source ./pages \  # Replace with your source directory
-            --target ./pages.zh \  # Replace with your target directory
+            --source ./pages \      
+            --target ./pages.zh \  #
             --provider openai \
             --model "gpt-4o-mini" \
             --concurrency 5 \
             --overwrite
 
-      - name: Configure Git
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
+      
 
-      - name: Commit changes
+      - name: Archive Translated Files
         run: |
-          git add ./pages.zh/*  # Add the translated files
-          git commit -m "Automated translation using Markdown-translator-go"
-          git push
-        if: success()
+          
+          tar -czvf translated-pages.tar.gz ./pages.zh
+
+      - name: Upload Translation Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: translated-pages
+          path: translated-pages.tar.gz
+          retention-days: 1
 
   release:
-    needs: [build, translate]
+    needs: [build, translate] 
     runs-on: ubuntu-latest
+    permissions: 
+      contents: write 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Needed to create the release notes
+          fetch-depth: 0 
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v3
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: artifacts 
+
+      - name: List downloaded artifacts (for debugging)
+        run: ls -R artifacts
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 
         with:
+
           files: |
             artifacts/Markdown-translator-go-app-windows-amd64/Markdown-translator-go-app-windows-amd64.exe
             artifacts/Markdown-translator-go-app-linux-amd64/Markdown-translator-go-app-linux-amd64
+            artifacts/translated-pages/translated-pages.tar.gz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
